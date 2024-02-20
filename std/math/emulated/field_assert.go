@@ -203,37 +203,38 @@ func (f *Field[T]) IsZero(a *Element[T]) frontend.Variable {
 	return res
 }
 
-// // Cmp returns:
-// //   - -1 if a < b
-// //   - 0 if a = b
-// //   - 1 if a > b
-// //
-// // The method internally reduces the element and asserts that the value is less
-// // than the modulus.
-// func (f *Field[T]) Cmp(a, b *Element[T]) frontend.Variable {
-// 	ca := f.Reduce(a)
-// 	f.AssertIsInRange(ca)
-// 	cb := f.Reduce(b)
-// 	f.AssertIsInRange(cb)
-// 	var res frontend.Variable = 0
-// 	for i := int(f.fParams.NbLimbs() - 1); i >= 0; i-- {
-// 		lmbCmp := f.api.Cmp(ca.Limbs[i], cb.Limbs[i])
-// 		res = f.api.Select(f.api.IsZero(res), lmbCmp, res)
-// 	}
-// 	return res
-// }
+// Cmp returns:
+//   - -1 if a < b
+//   - 0 if a = b
+//   - 1 if a > b
+//
+// The method internally reduces the element and asserts that the value is less
+// than the modulus.
+func (f *Field[T]) Cmp(a, b *Element[T]) frontend.Variable {
+	ca := f.Reduce(a)
+	f.AssertIsInRange(ca)
+	cb := f.Reduce(b)
+	f.AssertIsInRange(cb)
+	var res frontend.Variable = 0
+	for i := int(f.fParams.NbLimbs() - 1); i >= 0; i-- {
+		lmbCmp := f.api.Cmp(ca.Limbs[i], cb.Limbs[i])
+		res = f.api.Select(f.api.IsZero(res), lmbCmp, res)
+	}
+	return res
+}
 
 // TODO(@ivokub)
-// func (f *Field[T]) AssertIsDifferent(a, b *Element[T]) {
-// 	ca := f.Reduce(a)
-// 	f.AssertIsInRange(ca)
-// 	cb := f.Reduce(b)
-// 	f.AssertIsInRange(cb)
-// 	var res frontend.Variable = 0
-// 	for i := 0; i < int(f.fParams.NbLimbs()); i++ {
-// 		cmp := f.api.Cmp(ca.Limbs[i], cb.Limbs[i])
-// 		cmpsq := f.api.Mul(cmp, cmp)
-// 		res = f.api.Add(res, cmpsq)
-// 	}
-// 	f.api.AssertIsDifferent(res, 0)
-// }
+// ensure a, b are different
+func (f *Field[T]) AssertIsDifferent(a, b *Element[T]) {
+	ca := f.Reduce(a)
+	f.AssertIsInRange(ca)
+	cb := f.Reduce(b)
+	f.AssertIsInRange(cb)
+	var res frontend.Variable = 0
+	for i := 0; i < int(f.fParams.NbLimbs()); i++ {
+		cmp := f.api.Cmp(ca.Limbs[i], cb.Limbs[i])
+		cmpsq := f.api.Mul(cmp, cmp)
+		res = f.api.Add(res, cmpsq)
+	}
+	f.api.AssertIsDifferent(res, 0)
+}
