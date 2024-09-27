@@ -13,6 +13,7 @@ type G2 struct {
 	*fields_bls12381.Ext2
 	u1, w *emulated.Element[BaseField]
 	v     *fields_bls12381.E2
+	api   frontend.API
 }
 
 type g2AffP struct {
@@ -50,6 +51,7 @@ func NewG2(api frontend.API) *G2 {
 		w:    &w,
 		u1:   &u1,
 		v:    &v,
+		api:  api,
 	}
 }
 
@@ -96,6 +98,18 @@ func (g2 *G2) psi(q *G2Affine) *G2Affine {
 	}
 }
 
+func (g2 *G2) psi2(q *G2Affine) *G2Affine {
+	x := g2.Ext2.MulByElement(&q.P.X, g2.w)
+	y := g2.Ext2.Neg(&q.P.Y)
+
+	return &G2Affine{
+		P: g2AffP{
+			X: *x,
+			Y: *y,
+		},
+	}
+}
+
 func (g2 *G2) scalarMulBySeed(q *G2Affine) *G2Affine {
 
 	z := g2.triple(q)
@@ -132,6 +146,60 @@ func (g2 G2) add(p, q *G2Affine) *G2Affine {
 		P: g2AffP{
 			X: *xr,
 			Y: *yr,
+		},
+	}
+}
+
+// Follow sw_emulated.Curve.AddUnified to implement the Brier and Joye algorithm
+// to handle edge cases, i.e., p == q, p == 0 or/and q == 0
+func (g2 G2) addUnified(p, q *G2Affine) *G2Affine {
+
+	// selector1 = 1 when p is (0,0) and 0 otherwise
+	selector1 := g2.api.And(g2.Ext2.IsZero(&p.P.X), g2.Ext2.IsZero(&p.P.Y))
+	// selector2 = 1 when q is (0,0) and 0 otherwise
+	selector2 := g2.api.And(g2.Ext2.IsZero(&q.P.X), g2.Ext2.IsZero(&q.P.Y))
+
+	// λ = ((p.x+q.x)² - p.x*q.x + a)/(p.y + q.y)
+	pxqx := g2.Ext2.Mul(&p.P.X, &q.P.X)
+	pxplusqx := g2.Ext2.Add(&p.P.X, &q.P.X)
+	num := g2.Ext2.Mul(pxplusqx, pxplusqx)
+	num = g2.Ext2.Sub(num, pxqx)
+	denum := g2.Ext2.Add(&p.P.Y, &q.P.Y)
+	// if p.y + q.y = 0, assign dummy 1 to denum and continue
+	selector3 := g2.Ext2.IsZero(denum)
+	denum = g2.Ext2.Select(selector3, g2.Ext2.One(), denum)
+	λ := g2.Ext2.DivUnchecked(num, denum) // we already know that denum won't be zero
+
+	// x = λ^2 - p.x - q.x
+	xr := g2.Ext2.Mul(λ, λ)
+	xr = g2.Ext2.Sub(xr, pxplusqx)
+
+	// y = λ(p.x - xr) - p.y
+	yr := g2.Ext2.Sub(&p.P.X, xr)
+	yr = g2.Ext2.Mul(yr, λ)
+	yr = g2.Ext2.Sub(yr, &p.P.Y)
+	result := &G2Affine{
+		P: g2AffP{
+			X: *xr,
+			Y: *yr,
+		},
+	}
+
+	zero := g2.Ext2.Zero()
+	// if p=(0,0) return q
+	resultX := *g2.Select(selector1, &q.P.X, &result.P.X)
+	resultY := *g2.Select(selector1, &q.P.Y, &result.P.Y)
+	// if q=(0,0) return p
+	resultX = *g2.Select(selector2, &p.P.X, &resultX)
+	resultY = *g2.Select(selector2, &p.P.Y, &resultY)
+	// if p.y + q.y = 0, return (0, 0)
+	resultX = *g2.Select(selector3, zero, &resultX)
+	resultY = *g2.Select(selector3, zero, &resultY)
+
+	return &G2Affine{
+		P: g2AffP{
+			X: resultX,
+			Y: resultY,
 		},
 	}
 }
@@ -198,7 +266,7 @@ func (g2 G2) triple(p *G2Affine) *G2Affine {
 	λ1λ1 := g2.Square(λ1)
 	x2 = g2.Sub(λ1λ1, x2)
 
-	// ommit y2 computation, and
+	// omit y2 computation, and
 	// compute λ2 = 2p.y/(x2 − p.x) − λ1.
 	x1x2 := g2.Sub(&p.P.X, x2)
 	λ2 := g2.DivUnchecked(y2, x1x2)
@@ -234,7 +302,7 @@ func (g2 G2) doubleAndAdd(p, q *G2Affine) *G2Affine {
 	xqxp = g2.Ext2.Add(&p.P.X, &q.P.X)
 	x2 := g2.Ext2.Sub(λ1λ1, xqxp)
 
-	// ommit y2 computation
+	// omit y2 computation
 	// compute λ2 = -λ1-2*p.y/(x2-p.x)
 	ypyp := g2.Ext2.Add(&p.P.Y, &p.P.Y)
 	x2xp := g2.Ext2.Sub(x2, &p.P.X)

@@ -5,11 +5,12 @@ import (
 	"github.com/consensys/gnark/backend"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/backend/plonk"
-	"github.com/consensys/gnark/backend/plonkfri"
+	"github.com/consensys/gnark/backend/solidity"
 	"github.com/consensys/gnark/backend/witness"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/schema"
+	"github.com/consensys/gnark/logger"
 	"github.com/consensys/gnark/test/unsafekzg"
 )
 
@@ -31,6 +32,7 @@ import (
 func (assert *Assert) CheckCircuit(circuit frontend.Circuit, opts ...TestingOption) {
 	// get the testing configuration
 	opt := assert.options(opts...)
+	log := logger.Logger()
 
 	// for each {curve, backend} tuple
 	for _, curve := range opt.curves {
@@ -108,8 +110,6 @@ func (assert *Assert) CheckCircuit(circuit frontend.Circuit, opts ...TestingOpti
 						concreteBackend = _groth16
 					case backend.PLONK:
 						concreteBackend = _plonk
-					case backend.PLONKFRI:
-						concreteBackend = _plonkfri
 					default:
 						panic("backend not implemented")
 					}
@@ -123,17 +123,31 @@ func (assert *Assert) CheckCircuit(circuit frontend.Circuit, opts ...TestingOpti
 						w := w
 						assert.Run(func(assert *Assert) {
 							checkSolidity := opt.checkSolidity && curve == ecc.BN254
-							proof, err := concreteBackend.prove(ccs, pk, w.full, opt.proverOpts...)
+							proverOpts := opt.proverOpts
+							verifierOpts := opt.verifierOpts
+							if b == backend.GROTH16 {
+								// currently groth16 Solidity checker only supports circuits with up to 1 commitment
+								if len(ccs.GetCommitments().CommitmentIndexes()) > 1 {
+									log.Warn().
+										Int("nb_commitments", len(ccs.GetCommitments().CommitmentIndexes())).
+										Msg("skipping solidity check, too many commitments")
+								}
+								checkSolidity = checkSolidity && (len(ccs.GetCommitments().CommitmentIndexes()) <= 1)
+								// set the default hash function in case of	custom hash function not set. This is to ensure that the proof can be verified by gnark-solidity-checker
+								proverOpts = append([]backend.ProverOption{solidity.WithProverTargetSolidityVerifier(b)}, opt.proverOpts...)
+								verifierOpts = append([]backend.VerifierOption{solidity.WithVerifierTargetSolidityVerifier(b)}, opt.verifierOpts...)
+							}
+							proof, err := concreteBackend.prove(ccs, pk, w.full, proverOpts...)
 							assert.noError(err, &w)
 
-							err = concreteBackend.verify(proof, vk, w.public, opt.verifierOpts...)
+							err = concreteBackend.verify(proof, vk, w.public, verifierOpts...)
 							assert.noError(err, &w)
 
 							if checkSolidity {
 								// check that the proof can be verified by gnark-solidity-checker
-								if _vk, ok := vk.(verifyingKey); ok {
+								if _vk, ok := vk.(solidity.VerifyingKey); ok {
 									assert.Run(func(assert *Assert) {
-										assert.solidityVerification(b, _vk, proof, w.public)
+										assert.solidityVerification(b, _vk, proof, w.public, opt.solidityOpts)
 									}, "solidity")
 								}
 							}
@@ -269,22 +283,6 @@ var (
 		},
 		verify: func(proof, vk any, publicWitness witness.Witness, opts ...backend.VerifierOption) error {
 			return plonk.Verify(proof.(plonk.Proof), vk.(plonk.VerifyingKey), publicWitness, opts...)
-		},
-	}
-
-	_plonkfri = tBackend{
-		setup: func(ccs constraint.ConstraintSystem, curve ecc.ID) (
-			pk, vk any,
-			pkBuilder, vkBuilder, proofBuilder func() any,
-			err error) {
-			pk, vk, err = plonkfri.Setup(ccs)
-			return pk, vk, func() any { return nil }, func() any { return nil }, func() any { return nil }, err
-		},
-		prove: func(ccs constraint.ConstraintSystem, pk any, fullWitness witness.Witness, opts ...backend.ProverOption) (proof any, err error) {
-			return plonkfri.Prove(ccs, pk.(plonkfri.ProvingKey), fullWitness, opts...)
-		},
-		verify: func(proof, vk any, publicWitness witness.Witness, opts ...backend.VerifierOption) error {
-			return plonkfri.Verify(proof, vk.(plonkfri.VerifyingKey), publicWitness, opts...)
 		},
 	}
 )

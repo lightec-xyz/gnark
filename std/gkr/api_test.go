@@ -8,9 +8,17 @@ import (
 	"testing"
 	"time"
 
+	bls12377 "github.com/consensys/gnark/constraint/bls12-377"
+	bls12381 "github.com/consensys/gnark/constraint/bls12-381"
+	bls24315 "github.com/consensys/gnark/constraint/bls24-315"
+	bls24317 "github.com/consensys/gnark/constraint/bls24-317"
+	bw6633 "github.com/consensys/gnark/constraint/bw6-633"
+	bw6761 "github.com/consensys/gnark/constraint/bw6-761"
+	"github.com/consensys/gnark/test"
+
 	"github.com/consensys/gnark-crypto/kzg"
 	"github.com/consensys/gnark/backend/plonk"
-	bn254r1cs "github.com/consensys/gnark/constraint/bn254"
+	bn254 "github.com/consensys/gnark/constraint/bn254"
 	"github.com/stretchr/testify/require"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -25,7 +33,7 @@ import (
 	"github.com/consensys/gnark/frontend/cs/scs"
 	stdHash "github.com/consensys/gnark/std/hash"
 	"github.com/consensys/gnark/std/hash/mimc"
-	test_vector_utils "github.com/consensys/gnark/std/utils/test_vectors_utils"
+	test_vector_utils "github.com/consensys/gnark/std/internal/test_vectors_utils"
 	"github.com/consensys/gnark/test/unsafekzg"
 )
 
@@ -74,8 +82,8 @@ func TestDoubleNoDependencyCircuit(t *testing.T) {
 			assignment := doubleNoDependencyCircuit{X: xValues}
 			circuit := doubleNoDependencyCircuit{X: make([]frontend.Variable, len(xValues)), hashName: hashName}
 
-			testGroth16(t, &circuit, &assignment)
-			testPlonk(t, &circuit, &assignment)
+			test.NewAssert(t).CheckCircuit(&circuit, test.WithValidAssignment(&assignment))
+
 		}
 	}
 }
@@ -371,7 +379,7 @@ func (c *benchMiMCMerkleTreeCircuit) Define(api frontend.API) error {
 	}
 	Z := solution.Export(z)
 
-	challenge, err := api.Compiler().(frontend.Committer).Commit(Z...)
+	challenge, err := api.(frontend.Committer).Commit(Z...)
 	if err != nil {
 		return err
 	}
@@ -427,7 +435,9 @@ func testPlonk(t *testing.T, circuit, assignment frontend.Circuit) {
 }
 
 func registerMiMC() {
-	bn254r1cs.RegisterHashBuilder("mimc", bn254MiMC.NewMiMC)
+	bn254.RegisterHashBuilder("mimc", func() hash.Hash {
+		return bn254MiMC.NewMiMC()
+	})
 	stdHash.Register("mimc", func(api frontend.API) (stdHash.FieldHasher, error) {
 		m, err := mimc.NewMiMC(api)
 		return &m, err
@@ -436,11 +446,31 @@ func registerMiMC() {
 
 func registerConstant(c int) {
 	name := strconv.Itoa(c)
-	bn254r1cs.RegisterHashBuilder(name, func() hash.Hash {
-		return constHashBn254(c)
+	bls12377.RegisterHashBuilder(name, func() hash.Hash {
+		return bls12377.ConstPseudoHash(c)
 	})
+
+	bls12381.RegisterHashBuilder(name, func() hash.Hash {
+		return bls12381.ConstPseudoHash(c)
+	})
+	bls24315.RegisterHashBuilder(name, func() hash.Hash {
+		return bls24315.ConstPseudoHash(c)
+	})
+	bls24317.RegisterHashBuilder(name, func() hash.Hash {
+		return bls24317.ConstPseudoHash(c)
+	})
+	bn254.RegisterHashBuilder(name, func() hash.Hash {
+		return bn254.ConstPseudoHash(c)
+	})
+	bw6633.RegisterHashBuilder(name, func() hash.Hash {
+		return bw6633.ConstPseudoHash(c)
+	})
+	bw6761.RegisterHashBuilder(name, func() hash.Hash {
+		return bw6761.ConstPseudoHash(c)
+	})
+
 	stdHash.Register(name, func(frontend.API) (stdHash.FieldHasher, error) {
-		return constHash(c), nil
+		return constPseudoHash(c), nil
 	})
 }
 
@@ -456,38 +486,15 @@ func registerMiMCGate() {
 	gkr.Gates["mimc"] = mimcCipherGate{}
 }
 
-type constHashBn254 int // TODO @Tabaie move to gnark-crypto
+type constPseudoHash int
 
-func (c constHashBn254) Write(p []byte) (int, error) {
-	return len(p), nil
-}
-
-func (c constHashBn254) Sum([]byte) []byte {
-	var x fr.Element
-	x.SetInt64(int64(c))
-	res := x.Bytes()
-	return res[:]
-}
-
-func (c constHashBn254) Reset() {}
-
-func (c constHashBn254) Size() int {
-	return fr.Bytes
-}
-
-func (c constHashBn254) BlockSize() int {
-	return fr.Bytes
-}
-
-type constHash int
-
-func (c constHash) Sum() frontend.Variable {
+func (c constPseudoHash) Sum() frontend.Variable {
 	return int(c)
 }
 
-func (c constHash) Write(...frontend.Variable) {}
+func (c constPseudoHash) Write(...frontend.Variable) {}
 
-func (c constHash) Reset() {}
+func (c constPseudoHash) Reset() {}
 
 var mimcFrTotalCalls = 0
 
