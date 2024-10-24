@@ -25,7 +25,7 @@ package uints
 import (
 	"fmt"
 	"math"
-	"math/bits"
+	mathbits "math/bits"
 
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/internal/logderivprecomp"
@@ -299,7 +299,7 @@ func (bf *BinaryField[T]) Add(a ...T) T {
 		va[i] = bf.ToValue(a[i])
 	}
 	vres := bf.api.Add(va[0], va[1], va[2:]...)
-	maxBitlen := bits.Len(uint(inLen)) + tLen
+	maxBitlen := mathbits.Len(uint(inLen)) + tLen
 	// bitslice.Partition below checks that the input is less than 2^maxBitlen and that we have omitted carry correctly
 	vreslow, _ := bitslice.Partition(bf.api, vres, uint(tLen), bitslice.WithNbDigits(maxBitlen), bitslice.WithUnconstrainedOutputs())
 	res := bf.ValueOf(vreslow)
